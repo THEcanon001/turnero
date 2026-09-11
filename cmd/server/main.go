@@ -82,7 +82,7 @@ func run(logger *slog.Logger) error {
 	appointmentService := appointment.NewService(appointmentRepo, scheduleRepo)
 
 	authService := auth.NewService(providerRepo, employeeRepo, authRepo, jwtManager, jwtCfg)
-	authHandler := auth.NewHandler(authService)
+	authHandler := auth.NewHandler(authService, cfg.Google.ClientID)
 	providerHandler := provider.NewHandler(providerRepo)
 	providerHandler.SetStatsProvider(&statsAdapter{appointmentRepo: appointmentRepo})
 	employeeHandler := employee.NewHandler(employeeRepo)
@@ -127,6 +127,7 @@ func run(logger *slog.Logger) error {
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
 		r.Post("/login/employee", authHandler.LoginEmployee)
+		r.Post("/google", authHandler.GoogleLogin)
 		r.Post("/join", authHandler.Join)
 		r.Post("/refresh", authHandler.Refresh)
 		r.Post("/logout", authHandler.Logout)

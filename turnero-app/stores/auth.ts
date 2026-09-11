@@ -5,6 +5,7 @@ import type {
   LoginResponse,
   RegisterRequest,
   RegisterResponse,
+  GoogleLoginRequest,
 } from "../types/api";
 
 export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -22,6 +23,7 @@ interface AuthState {
   user: AuthUser | null;
   login: (data: LoginRequest) => Promise<void>;
   register: (data: RegisterRequest) => Promise<void>;
+  googleLogin: (data: GoogleLoginRequest) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
@@ -57,6 +59,18 @@ export const useAuthStore = create<AuthState>((set) => ({
         type: res.type,
         provider_id: res.id,
       },
+    });
+  },
+
+  googleLogin: async (data: GoogleLoginRequest) => {
+    const { data: res } = await api.post<LoginResponse>(
+      "/v1/auth/google",
+      data
+    );
+    await setTokens(res.access_token, res.refresh_token);
+    set({
+      status: "authenticated",
+      user: res.user,
     });
   },
 

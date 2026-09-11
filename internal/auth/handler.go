@@ -11,12 +11,13 @@ import (
 
 // Handler handles HTTP requests for authentication.
 type Handler struct {
-	service  *Service
-	validate *validator.Validate
+	service        *Service
+	validate       *validator.Validate
+	googleClientID string
 }
 
 // NewHandler creates a new auth handler.
-func NewHandler(service *Service) *Handler {
+func NewHandler(service *Service, googleClientID ...string) *Handler {
 	v := validator.New()
 	// Custom slug validation: lowercase letters, numbers, hyphens only
 	v.RegisterValidation("slug", func(fl validator.FieldLevel) bool {
@@ -29,9 +30,15 @@ func NewHandler(service *Service) *Handler {
 		return true
 	})
 
+	var gClientID string
+	if len(googleClientID) > 0 {
+		gClientID = googleClientID[0]
+	}
+
 	return &Handler{
-		service:  service,
-		validate: v,
+		service:        service,
+		validate:       v,
+		googleClientID: gClientID,
 	}
 }
 
@@ -158,6 +165,50 @@ func (h *Handler) Join(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// GoogleLogin handles POST /v1/auth/google.
+func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
+	var req GoogleLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
+		return
+	}
+
+	if req.Type == "business" && (req.BusinessName == nil || *req.BusinessName == "") {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "business_name is required for business type")
+		return
+	}
+
+	// Verify Google id_token with audience validation
+	claims, err := VerifyGoogleToken(r.Context(), req.IDToken, h.googleClientID)
+	if err != nil {
+		slog.Warn("auth.handler: google login: " + err.Error())
+		writeError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Invalid Google token")
+		return
+	}
+
+	resp, err := h.service.GoogleLogin(r.Context(), req, claims)
+	if err != nil {
+		slog.Error("auth.handler: google login: " + err.Error())
+		if strings.Contains(err.Error(), "is required for new Google accounts") {
+			writeError(w, http.StatusBadRequest, "MISSING_FIELDS", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
+			writeError(w, http.StatusConflict, "CONFLICT", "Slug already taken")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Google login failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // LoginEmployee handles POST /v1/auth/login/employee.

@@ -90,6 +90,24 @@ type JoinResponse struct {
 	RefreshToken string    `json:"refresh_token"`
 }
 
+// GoogleLoginRequest is the input for Google OAuth login/register.
+// Type, Slug, and Phone are only required for new account creation.
+type GoogleLoginRequest struct {
+	IDToken      string  `json:"id_token" validate:"required"`
+	Type         string  `json:"type" validate:"omitempty,oneof=individual business"`
+	Slug         string  `json:"slug" validate:"omitempty,min=3,max=50,slug"`
+	Phone        string  `json:"phone" validate:"omitempty"`
+	Timezone     string  `json:"timezone"`
+	BusinessName *string `json:"business_name"`
+}
+
+// GoogleClaims holds the verified claims from a Google id_token.
+type GoogleClaims struct {
+	Sub   string `json:"sub"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
 // RefreshToken represents a stored refresh token.
 type RefreshToken struct {
 	ID         uuid.UUID  `json:"id"`

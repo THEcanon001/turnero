@@ -13,6 +13,11 @@ type Config struct {
 	JWT          JWTConfig
 	QR           QRConfig
 	Notification NotificationConfig
+	Google       GoogleConfig
+}
+
+type GoogleConfig struct {
+	ClientID string `env:"GOOGLE_CLIENT_ID"`
 }
 
 type NotificationConfig struct {

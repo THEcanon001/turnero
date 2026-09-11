@@ -200,6 +200,16 @@ export interface RescheduleRequest {
   start_time: string;
 }
 
+// Google OAuth
+export interface GoogleLoginRequest {
+  id_token: string;
+  type?: "individual" | "business";
+  slug?: string;
+  phone?: string;
+  timezone?: string;
+  business_name?: string;
+}
+
 // Schedule
 export interface DaySchedule {
   day_of_week: number;

@@ -337,6 +337,112 @@ func (s *Service) LoginEmployee(ctx context.Context, req LoginRequest) (*LoginRe
 	}, nil
 }
 
+// GoogleLogin handles login/registration via Google OAuth.
+// If the Google account is already linked, it logs in directly.
+// If the email exists but isn't linked, it links the Google account and logs in.
+// If neither exists, it creates a new provider account.
+func (s *Service) GoogleLogin(ctx context.Context, req GoogleLoginRequest, claims *GoogleClaims) (*LoginResponse, error) {
+	// Try finding an existing provider by Google ID
+	p, err := s.providerRepo.GetByGoogleID(ctx, claims.Sub)
+	if err == nil {
+		return s.issueTokensForProvider(ctx, p)
+	}
+
+	// Try finding an existing provider by email
+	p, err = s.providerRepo.GetByEmail(ctx, claims.Email)
+	if err == nil {
+		// Link Google account to existing provider
+		if err := s.providerRepo.LinkGoogleID(ctx, p.ID, claims.Sub); err != nil {
+			return nil, fmt.Errorf("auth.service: link google: %w", err)
+		}
+		return s.issueTokensForProvider(ctx, p)
+	}
+
+	// New account — type, slug, and phone are required for registration
+	if req.Type == "" {
+		return nil, fmt.Errorf("auth.service: type is required for new Google accounts")
+	}
+	if req.Slug == "" {
+		return nil, fmt.Errorf("auth.service: slug is required for new Google accounts")
+	}
+	if req.Phone == "" {
+		return nil, fmt.Errorf("auth.service: phone is required for new Google accounts")
+	}
+
+	tz := req.Timezone
+	if tz == "" {
+		tz = "America/Mexico_City"
+	}
+
+	googleID := claims.Sub
+	p = &provider.Provider{
+		Type:         provider.Type(req.Type),
+		Name:         claims.Name,
+		Slug:         req.Slug,
+		Phone:        req.Phone,
+		Email:        claims.Email,
+		Timezone:     tz,
+		BusinessName: req.BusinessName,
+		GoogleID:     &googleID,
+	}
+
+	if err := s.providerRepo.Create(ctx, p); err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	// Auto-create "self" employee for individual (PF) providers
+	if p.Type == provider.TypeIndividual {
+		selfEmployee := &employee.Employee{
+			ProviderID: p.ID,
+			Name:       p.Name,
+			Phone:      p.Phone,
+			Role:       employee.RoleAdmin,
+			Email:      &p.Email,
+		}
+		if err := s.employeeRepo.Create(ctx, selfEmployee); err != nil {
+			return nil, fmt.Errorf("auth.service: create self employee: %w", err)
+		}
+	}
+
+	return s.issueTokensForProvider(ctx, p)
+}
+
+// issueTokensForProvider generates access/refresh tokens for a provider.
+func (s *Service) issueTokensForProvider(ctx context.Context, p *provider.Provider) (*LoginResponse, error) {
+	accessToken, err := s.jwtManager.GenerateAccessToken(p.ID, p.ID, "admin")
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	refreshToken, err := s.jwtManager.GenerateRefreshToken(p.ID, p.ID, "admin")
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	rt := &RefreshToken{
+		ProviderID: &p.ID,
+		TokenHash:  HashToken(refreshToken),
+		ExpiresAt:  time.Now().Add(s.jwtCfg.RefreshTokenExpiry),
+	}
+	if err := s.authRepo.StoreRefreshToken(ctx, rt); err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	return &LoginResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(s.jwtCfg.AccessTokenExpiry.Seconds()),
+		User: LoginUser{
+			ID:         p.ID,
+			Name:       p.Name,
+			Role:       "admin",
+			Type:       string(p.Type),
+			ProviderID: p.ID,
+		},
+	}, nil
+}
+
 // Logout revokes a refresh token.
 func (s *Service) Logout(ctx context.Context, rawRefreshToken string) error {
 	hash := HashToken(rawRefreshToken)

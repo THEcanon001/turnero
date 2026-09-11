@@ -33,6 +33,7 @@ type Provider struct {
 	BusinessName      *string     `json:"business_name,omitempty"`
 	Email             string      `json:"email"`
 	PasswordHash      string      `json:"-"`
+	GoogleID          *string     `json:"-"`
 	QRImagePath       *string     `json:"qr_image_path,omitempty"`
 	Plan              BillingPlan `json:"plan"`
 	BillingCycleStart *time.Time  `json:"billing_cycle_start,omitempty"`
