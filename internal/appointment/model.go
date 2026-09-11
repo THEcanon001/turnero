@@ -57,6 +57,28 @@ type UpdateStatusRequest struct {
 	Status Status `json:"status" validate:"required,oneof=confirmed cancelled completed no_show"`
 }
 
+// RescheduleRequest is the input for rescheduling an appointment.
+type RescheduleRequest struct {
+	Date      string `json:"date" validate:"required"`
+	StartTime string `json:"start_time" validate:"required"`
+}
+
+// ReassignRequest is the input for reassigning an appointment to another employee.
+type ReassignRequest struct {
+	EmployeeID uuid.UUID `json:"employee_id" validate:"required"`
+}
+
+// WalkInRequest is the input for creating a walk-in appointment by the provider.
+type WalkInRequest struct {
+	EmployeeID  uuid.UUID  `json:"employee_id" validate:"required"`
+	ServiceID   *uuid.UUID `json:"service_id"`
+	ClientName  string     `json:"client_name" validate:"required,min=2,max=100"`
+	ClientPhone string     `json:"client_phone" validate:"required"`
+	Date        string     `json:"date" validate:"required"`
+	StartTime   string     `json:"start_time" validate:"required"`
+	Notes       *string    `json:"notes" validate:"omitempty,max=500"`
+}
+
 // Slot represents an available time slot.
 type Slot struct {
 	StartTime string `json:"start_time"` // HH:MM

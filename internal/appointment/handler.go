@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -16,6 +17,8 @@ import (
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
 	"github.com/THEcanon001/turnero/internal/provider"
 )
+
+const cancelDeadlineHours = 2
 
 // Handler handles HTTP requests for appointments and availability.
 type Handler struct {
@@ -242,7 +245,7 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // Cancel handles POST /v1/appointments/{id}/cancel.
-// Public endpoint — verified by client phone.
+// Public endpoint — clients can cancel if more than 2 hours before the appointment.
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -268,6 +271,12 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Time restriction: client can't cancel within 2 hours of appointment
+	if err := checkCancelDeadline(apt.Date, apt.StartTime); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "CANCEL_TOO_LATE", err.Error())
+		return
+	}
+
 	if err := h.repo.UpdateStatus(r.Context(), id, StatusCancelled, req.Reason); err != nil {
 		slog.Error("appointment.handler: cancel: " + err.Error())
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel")
@@ -275,6 +284,306 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+// ProviderCancel handles POST /v1/appointments/{id}/provider-cancel.
+// Authenticated endpoint — providers can cancel any time without restriction.
+func (h *Handler) ProviderCancel(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid appointment ID")
+		return
+	}
+
+	var req CancelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req = CancelRequest{}
+	}
+
+	apt, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Appointment not found")
+		return
+	}
+
+	providerID := middleware.GetProviderID(r.Context())
+	if apt.ProviderID != providerID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "Not your appointment")
+		return
+	}
+
+	if apt.Status != StatusConfirmed {
+		writeError(w, http.StatusUnprocessableEntity, "BUSINESS_RULE_VIOLATION",
+			fmt.Sprintf("Cannot cancel appointment with status '%s'", apt.Status))
+		return
+	}
+
+	if err := h.repo.UpdateStatus(r.Context(), id, StatusCancelled, req.Reason); err != nil {
+		slog.Error("appointment.handler: provider cancel: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+// Reschedule handles POST /v1/appointments/{id}/reschedule.
+// Public endpoint — cancels existing and creates new in one operation.
+func (h *Handler) Reschedule(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid appointment ID")
+		return
+	}
+
+	var req RescheduleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
+		return
+	}
+
+	apt, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Appointment not found")
+		return
+	}
+
+	if apt.Status != StatusConfirmed {
+		writeError(w, http.StatusUnprocessableEntity, "BUSINESS_RULE_VIOLATION",
+			fmt.Sprintf("Cannot reschedule appointment with status '%s'", apt.Status))
+		return
+	}
+
+	if err := checkCancelDeadline(apt.Date, apt.StartTime); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "CANCEL_TOO_LATE", err.Error())
+		return
+	}
+
+	// Verify new slot is available
+	slots, err := h.service.GetAvailableSlots(r.Context(), apt.EmployeeID, req.Date)
+	if err != nil {
+		slog.Error("appointment.handler: reschedule check slots: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check availability")
+		return
+	}
+
+	var endTime string
+	var slotFound bool
+	for _, slot := range slots {
+		if slot.StartTime == req.StartTime && slot.Available {
+			slotFound = true
+			endTime = slot.EndTime
+			break
+		}
+	}
+
+	if !slotFound {
+		writeError(w, http.StatusConflict, "SLOT_TAKEN", "New time slot is not available")
+		return
+	}
+
+	// Cancel old appointment
+	reason := "rescheduled"
+	if err := h.repo.UpdateStatus(r.Context(), id, StatusCancelled, &reason); err != nil {
+		slog.Error("appointment.handler: reschedule cancel: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reschedule")
+		return
+	}
+
+	// Create new appointment
+	newApt := &Appointment{
+		ProviderID:  apt.ProviderID,
+		EmployeeID:  apt.EmployeeID,
+		ServiceID:   apt.ServiceID,
+		ClientName:  apt.ClientName,
+		ClientPhone: apt.ClientPhone,
+		Date:        req.Date,
+		StartTime:   req.StartTime,
+		EndTime:     endTime,
+		Notes:       apt.Notes,
+	}
+
+	if err := h.repo.Create(r.Context(), newApt); err != nil {
+		slog.Error("appointment.handler: reschedule create: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create rescheduled appointment")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, newApt)
+}
+
+// Reassign handles PUT /v1/appointments/{id}/reassign.
+// Authenticated endpoint — admin moves appointment to another employee.
+func (h *Handler) Reassign(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid appointment ID")
+		return
+	}
+
+	var req ReassignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
+		return
+	}
+
+	apt, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Appointment not found")
+		return
+	}
+
+	providerID := middleware.GetProviderID(r.Context())
+	if apt.ProviderID != providerID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "Not your appointment")
+		return
+	}
+
+	if apt.Status != StatusConfirmed {
+		writeError(w, http.StatusUnprocessableEntity, "BUSINESS_RULE_VIOLATION",
+			fmt.Sprintf("Cannot reassign appointment with status '%s'", apt.Status))
+		return
+	}
+
+	// Verify new employee belongs to same provider
+	newEmp, err := h.employeeRepo.GetByID(r.Context(), req.EmployeeID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Employee not found")
+		return
+	}
+	if newEmp.ProviderID != providerID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "Employee does not belong to your provider")
+		return
+	}
+
+	// Verify the new employee has the slot available
+	slots, err := h.service.GetAvailableSlots(r.Context(), req.EmployeeID, apt.Date)
+	if err != nil {
+		slog.Error("appointment.handler: reassign check slots: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check availability")
+		return
+	}
+
+	var slotAvailable bool
+	for _, slot := range slots {
+		if slot.StartTime == apt.StartTime && slot.Available {
+			slotAvailable = true
+			break
+		}
+	}
+
+	if !slotAvailable {
+		writeError(w, http.StatusConflict, "SLOT_TAKEN", "Employee is not available at this time")
+		return
+	}
+
+	if err := h.repo.UpdateEmployee(r.Context(), id, req.EmployeeID); err != nil {
+		slog.Error("appointment.handler: reassign: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reassign")
+		return
+	}
+
+	apt.EmployeeID = req.EmployeeID
+	writeJSON(w, http.StatusOK, apt)
+}
+
+// WalkIn handles POST /v1/appointments/walk-in.
+// Authenticated endpoint — providers create manual appointments for walk-in clients.
+func (h *Handler) WalkIn(w http.ResponseWriter, r *http.Request) {
+	var req WalkInRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
+		return
+	}
+
+	providerID := middleware.GetProviderID(r.Context())
+
+	// Verify employee belongs to provider
+	emp, err := h.employeeRepo.GetByID(r.Context(), req.EmployeeID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Employee not found")
+		return
+	}
+	if emp.ProviderID != providerID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "Employee does not belong to your provider")
+		return
+	}
+
+	// Check slot availability
+	slots, err := h.service.GetAvailableSlots(r.Context(), req.EmployeeID, req.Date)
+	if err != nil {
+		slog.Error("appointment.handler: walk-in check slots: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check availability")
+		return
+	}
+
+	var endTime string
+	var slotFound bool
+	for _, slot := range slots {
+		if slot.StartTime == req.StartTime && slot.Available {
+			slotFound = true
+			endTime = slot.EndTime
+			break
+		}
+	}
+
+	if !slotFound {
+		writeError(w, http.StatusConflict, "SLOT_TAKEN", "This time slot is not available")
+		return
+	}
+
+	apt := &Appointment{
+		ProviderID:  providerID,
+		EmployeeID:  req.EmployeeID,
+		ServiceID:   req.ServiceID,
+		ClientName:  req.ClientName,
+		ClientPhone: req.ClientPhone,
+		Date:        req.Date,
+		StartTime:   req.StartTime,
+		EndTime:     endTime,
+		Notes:       req.Notes,
+	}
+
+	if err := h.repo.Create(r.Context(), apt); err != nil {
+		if strings.Contains(err.Error(), "slot already taken") {
+			writeError(w, http.StatusConflict, "SLOT_TAKEN", "This time slot was just booked")
+			return
+		}
+		slog.Error("appointment.handler: walk-in create: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create appointment")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, apt)
+}
+
+// checkCancelDeadline verifies the appointment isn't within cancelDeadlineHours.
+func checkCancelDeadline(date, startTime string) error {
+	appointmentTime, err := time.Parse("2006-01-02 15:04", date+" "+startTime)
+	if err != nil {
+		return nil // if we can't parse, allow cancellation
+	}
+
+	deadline := appointmentTime.Add(-time.Duration(cancelDeadlineHours) * time.Hour)
+	if time.Now().After(deadline) {
+		return fmt.Errorf("cannot cancel within %d hours of appointment time", cancelDeadlineHours)
+	}
+	return nil
 }
 
 // UpdateStatus handles PUT /v1/appointments/{id}/status.

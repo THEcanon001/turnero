@@ -80,7 +80,9 @@ func run(logger *slog.Logger) error {
 	authHandler := auth.NewHandler(authService)
 	providerHandler := provider.NewHandler(providerRepo)
 	employeeHandler := employee.NewHandler(employeeRepo)
+	employeeHandler.SetAppointmentCanceller(appointmentRepo)
 	scheduleHandler := schedule.NewHandler(scheduleRepo, employeeRepo)
+	scheduleHandler.SetAppointmentCanceller(appointmentRepo)
 	appointmentHandler := appointment.NewHandler(appointmentService, appointmentRepo, providerRepo, employeeRepo)
 	searchHandler := search.NewHandler(pool)
 
@@ -116,6 +118,7 @@ func run(logger *slog.Logger) error {
 	r.Post("/v1/appointments", appointmentHandler.Create)
 	r.Get("/v1/appointments/{id}", appointmentHandler.GetByID)
 	r.Post("/v1/appointments/{id}/cancel", appointmentHandler.Cancel)
+	r.Post("/v1/appointments/{id}/reschedule", appointmentHandler.Reschedule)
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
@@ -156,6 +159,9 @@ func run(logger *slog.Logger) error {
 		// Appointments (provider management)
 		r.Get("/v1/appointments", appointmentHandler.ListByProvider)
 		r.Put("/v1/appointments/{id}/status", appointmentHandler.UpdateStatus)
+		r.Post("/v1/appointments/{id}/provider-cancel", appointmentHandler.ProviderCancel)
+		r.Put("/v1/appointments/{id}/reassign", appointmentHandler.Reassign)
+		r.Post("/v1/appointments/walk-in", appointmentHandler.WalkIn)
 	})
 
 	// Server

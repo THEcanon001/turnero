@@ -135,3 +135,93 @@ func TestGetProviderProfile_EmptySlug(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestReschedule_InvalidID(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/appointments/not-uuid/reschedule", nil)
+	rec := httptest.NewRecorder()
+	h.Reschedule(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestReschedule_InvalidBody(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/appointments/00000000-0000-0000-0000-000000000001/reschedule",
+		bytes.NewReader([]byte("bad")))
+	rec := httptest.NewRecorder()
+	h.Reschedule(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestReschedule_ValidationError(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	body, _ := json.Marshal(map[string]string{"date": "2026-09-15"}) // missing start_time
+	req := httptest.NewRequest(http.MethodPost, "/v1/appointments/00000000-0000-0000-0000-000000000001/reschedule",
+		bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Reschedule(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestProviderCancel_InvalidID(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/appointments/not-uuid/provider-cancel", nil)
+	rec := httptest.NewRecorder()
+	h.ProviderCancel(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestReassign_InvalidID(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/v1/appointments/not-uuid/reassign", nil)
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestReassign_InvalidBody(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/v1/appointments/00000000-0000-0000-0000-000000000001/reassign",
+		bytes.NewReader([]byte("bad")))
+	rec := httptest.NewRecorder()
+	h.Reassign(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestWalkIn_InvalidBody(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/appointments/walk-in",
+		bytes.NewReader([]byte("bad")))
+	rec := httptest.NewRecorder()
+	h.WalkIn(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestWalkIn_ValidationError(t *testing.T) {
+	h := appointment.NewHandler(nil, nil, nil, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"client_name": "Test",
+		"client_phone": "123",
+	}) // missing required fields
+	req := httptest.NewRequest(http.MethodPost, "/v1/appointments/walk-in",
+		bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.WalkIn(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

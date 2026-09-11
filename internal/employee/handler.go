@@ -1,6 +1,7 @@
 package employee
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,10 +17,16 @@ import (
 
 const invitationCodeTTL = 48 * time.Hour
 
+// AppointmentCanceller is the interface needed to batch-cancel on deactivation.
+type AppointmentCanceller interface {
+	CancelByEmployeeAndDateRange(ctx context.Context, employeeID uuid.UUID, fromDate, toDate, reason string) (int64, error)
+}
+
 // Handler handles HTTP requests for employees.
 type Handler struct {
-	repo     *Repository
-	validate *validator.Validate
+	repo         *Repository
+	aptCanceller AppointmentCanceller
+	validate     *validator.Validate
 }
 
 // NewHandler creates a new employee handler.
@@ -28,6 +35,11 @@ func NewHandler(repo *Repository) *Handler {
 		repo:     repo,
 		validate: validator.New(),
 	}
+}
+
+// SetAppointmentCanceller sets the appointment canceller for deactivation handling.
+func (h *Handler) SetAppointmentCanceller(c AppointmentCanceller) {
+	h.aptCanceller = c
 }
 
 // List handles GET /v1/employees.
@@ -151,6 +163,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wasActive := emp.IsActive
+
 	emp.Name = req.Name
 	emp.Phone = req.Phone
 	if req.IsActive != nil {
@@ -163,7 +177,23 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, emp)
+	// If deactivating, cancel all future confirmed appointments
+	var cancelledCount int64
+	if wasActive && !emp.IsActive && h.aptCanceller != nil {
+		today := time.Now().Format("2006-01-02")
+		farFuture := "2099-12-31"
+		n, err := h.aptCanceller.CancelByEmployeeAndDateRange(r.Context(), emp.ID, today, farFuture, "employee deactivated")
+		if err != nil {
+			slog.Error("employee.handler: batch cancel on deactivation: " + err.Error())
+		}
+		cancelledCount = n
+	}
+
+	resp := map[string]any{
+		"employee":                emp,
+		"cancelled_appointments": cancelledCount,
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Delete handles DELETE /v1/employees/{id}.

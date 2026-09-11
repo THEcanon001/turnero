@@ -163,6 +163,35 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status Stat
 	return nil
 }
 
+// UpdateEmployee changes the employee assigned to an appointment.
+func (r *Repository) UpdateEmployee(ctx context.Context, id, employeeID uuid.UUID) error {
+	query := `UPDATE appointments SET employee_id = $2 WHERE id = $1 RETURNING updated_at`
+	var updatedAt any
+	err := r.pool.QueryRow(ctx, query, id, employeeID).Scan(&updatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("appointment.repository: not found")
+		}
+		return fmt.Errorf("appointment.repository: update employee: %w", err)
+	}
+	return nil
+}
+
+// CancelByEmployeeAndDateRange cancels all confirmed appointments for an employee
+// within a date range. Returns the number of cancelled appointments.
+func (r *Repository) CancelByEmployeeAndDateRange(ctx context.Context, employeeID uuid.UUID, fromDate, toDate, reason string) (int64, error) {
+	query := `
+		UPDATE appointments
+		SET status = 'cancelled', cancellation_reason = $4
+		WHERE employee_id = $1 AND date >= $2::date AND date <= $3::date AND status = 'confirmed'`
+
+	result, err := r.pool.Exec(ctx, query, employeeID, fromDate, toDate, reason)
+	if err != nil {
+		return 0, fmt.Errorf("appointment.repository: batch cancel: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
+
 // ListByEmployeeAndDate returns confirmed appointments for an employee on a given date.
 // Used for slot availability calculation.
 func (r *Repository) ListByEmployeeAndDate(ctx context.Context, employeeID uuid.UUID, date string) ([]Appointment, error) {

@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,11 +17,17 @@ import (
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
 )
 
+// AppointmentCanceller is the interface needed to batch-cancel appointments.
+type AppointmentCanceller interface {
+	CancelByEmployeeAndDateRange(ctx context.Context, employeeID uuid.UUID, fromDate, toDate, reason string) (int64, error)
+}
+
 // Handler handles HTTP requests for schedules.
 type Handler struct {
-	scheduleRepo *Repository
-	employeeRepo *employee.Repository
-	validate     *validator.Validate
+	scheduleRepo    *Repository
+	employeeRepo    *employee.Repository
+	aptCanceller    AppointmentCanceller
+	validate        *validator.Validate
 }
 
 // NewHandler creates a new schedule handler.
@@ -30,6 +37,11 @@ func NewHandler(scheduleRepo *Repository, employeeRepo *employee.Repository) *Ha
 		employeeRepo: employeeRepo,
 		validate:     validator.New(),
 	}
+}
+
+// SetAppointmentCanceller sets the appointment canceller for batch operations.
+func (h *Handler) SetAppointmentCanceller(c AppointmentCanceller) {
+	h.aptCanceller = c
 }
 
 // SetSchedule handles PUT /v1/employees/{employeeId}/schedules.
@@ -144,7 +156,25 @@ func (h *Handler) AddException(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, exc)
+	// If marking day as unavailable, batch-cancel affected appointments
+	var cancelledCount int64
+	if !exc.IsAvailable && h.aptCanceller != nil {
+		reason := "day blocked by provider"
+		if exc.Reason != nil && *exc.Reason != "" {
+			reason = *exc.Reason
+		}
+		n, err := h.aptCanceller.CancelByEmployeeAndDateRange(r.Context(), employeeID, exc.Date, exc.Date, reason)
+		if err != nil {
+			slog.Error("schedule.handler: batch cancel: " + err.Error())
+		}
+		cancelledCount = n
+	}
+
+	resp := map[string]any{
+		"exception":               exc,
+		"cancelled_appointments": cancelledCount,
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // ListExceptions handles GET /v1/employees/{employeeId}/schedule-exceptions.
