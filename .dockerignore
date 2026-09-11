@@ -1,0 +1,34 @@
+# Build artifacts
+bin/
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Docs and specs
+specs/
+*.md
+LICENSE
+
+# DevOps configs (not needed in image)
+nginx/
+grafana/
+scripts/
+.github/
+
+# Local env
+.env
+.env.*

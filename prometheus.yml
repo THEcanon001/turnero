@@ -1,0 +1,21 @@
+# Prometheus scrape configuration for Turnero
+# Docs: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Turnero Go API server
+  - job_name: "turnero"
+    static_configs:
+      - targets: ["turnero:8080"]
+    metrics_path: "/metrics"
+    # In docker-compose network, use service name.
+    # For bare-metal, change to localhost:8080.
+
+  # Node exporter — system metrics (CPU, RAM, disk, network)
+  # Install: https://github.com/prometheus/node_exporter
+  - job_name: "node"
+    static_configs:
+      - targets: ["node-exporter:9100"]

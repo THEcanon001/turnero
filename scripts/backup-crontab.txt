@@ -1,0 +1,12 @@
+# =============================================================================
+# Crontab entries for Turnero
+# Install: crontab -e  (then paste these lines)
+# Or: crontab scripts/backup-crontab.txt
+# =============================================================================
+
+# PostgreSQL backup — daily at 2:00 AM
+# Requires PGPASSWORD env var or ~/.pgpass file
+0 2 * * * PGPASSWORD=TODO_SET_PASSWORD /opt/turnero/scripts/backup-db.sh >> /var/log/turnero/backup.log 2>&1
+
+# Let's Encrypt certificate renewal — twice daily (certbot handles skip if not needed)
+0 3,15 * * * certbot renew --quiet --post-hook "systemctl reload nginx"

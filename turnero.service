@@ -1,0 +1,48 @@
+# =============================================================================
+# Systemd service unit for Turnero API Server
+# Install: sudo cp turnero.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable turnero
+#          sudo systemctl start turnero
+# =============================================================================
+
+[Unit]
+Description=Turnero API Server
+Documentation=https://github.com/THEcanon001/turnero
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=turnero
+Group=turnero
+WorkingDirectory=/opt/turnero
+
+# Binary and environment
+ExecStart=/opt/turnero/turnero
+EnvironmentFile=/opt/turnero/.env
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/data/qr /var/log/turnero
+PrivateTmp=true
+
+# Logging (stdout/stderr → journald → promtail → Loki)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=turnero
+
+[Install]
+WantedBy=multi-user.target

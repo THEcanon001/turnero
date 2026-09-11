@@ -1,0 +1,114 @@
+# =============================================================================
+# Grafana Alert Rules for Turnero
+# Import via Grafana UI: Alerting > Alert Rules > Import
+# Or provision via Grafana provisioning API
+# =============================================================================
+#
+# These rules are defined in Prometheus alerting format.
+# To use with Grafana, import them as Grafana-managed alert rules
+# or configure Prometheus alertmanager separately.
+
+groups:
+  - name: turnero-critical
+    interval: 30s
+    rules:
+      # High error rate: more than 5% of requests return 5xx
+      - alert: HighErrorRate
+        expr: >
+          (sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+          / sum(rate(http_requests_total[5m]))) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: >
+            Error rate is {{ $value | humanizePercentage }} (threshold: 5%).
+            Check application logs for details.
+
+      # Server down: no metrics scraped for 2 minutes
+      - alert: ServerDown
+        expr: up{job="turnero"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Turnero server is down"
+          description: >
+            Prometheus cannot scrape the Turnero server.
+            Check if the process is running: systemctl status turnero
+
+  - name: turnero-warning
+    interval: 60s
+    rules:
+      # High latency: p99 above 2 seconds for 5 minutes
+      - alert: HighLatencyP99
+        expr: >
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p99 latency"
+          description: >
+            p99 latency is {{ $value | humanizeDuration }}.
+            Check for slow database queries or resource contention.
+
+      # Disk usage above 80%
+      - alert: DiskUsageHigh
+        expr: >
+          (1 - node_filesystem_avail_bytes{mountpoint="/"} /
+           node_filesystem_size_bytes{mountpoint="/"}) > 0.80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 80%"
+          description: >
+            Disk usage is {{ $value | humanizePercentage }}.
+            Consider cleaning up logs, old backups, or expanding disk.
+
+      # High CPU for sustained period
+      - alert: HighCPU
+        expr: >
+          (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: >
+            CPU usage is {{ $value | humanizePercentage }} for 10+ minutes.
+            Consider scaling up or investigating hot paths.
+
+      # High memory usage
+      - alert: HighMemory
+        expr: >
+          (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: >
+            Memory usage is {{ $value | humanizePercentage }}.
+            Check for memory leaks or consider scaling up.
+
+  - name: turnero-business
+    interval: 300s
+    rules:
+      # No appointments created in 2 hours during business hours (9am-9pm)
+      - alert: NoAppointmentsCreated
+        expr: >
+          increase(appointments_created_total[2h]) == 0
+          and ON() hour() >= 9 and ON() hour() < 21
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "No appointments created in 2 hours"
+          description: >
+            No new appointments in the last 2 hours during business hours.
+            This may indicate an issue or simply low traffic.

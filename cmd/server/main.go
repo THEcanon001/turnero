@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/THEcanon001/turnero/internal/appointment"
 	"github.com/THEcanon001/turnero/internal/auth"
@@ -25,6 +26,7 @@ import (
 	"github.com/THEcanon001/turnero/internal/qr"
 	"github.com/THEcanon001/turnero/internal/schedule"
 	"github.com/THEcanon001/turnero/internal/search"
+	"github.com/THEcanon001/turnero/internal/worker"
 	tjwt "github.com/THEcanon001/turnero/pkg/jwt"
 )
 
@@ -110,12 +112,15 @@ func run(logger *slog.Logger) error {
 
 	// Global middleware
 	r.Use(middleware.RequestID)
+	r.Use(middleware.Metrics())
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Logging(logger))
 	r.Use(middleware.CORS([]string{"*"})) // Restrict in production
+	r.Use(middleware.RateLimit(100, 200))
 
-	// Health endpoint
+	// Operational endpoints (restrict /metrics via Nginx in production)
 	r.Get("/health", healthHandler(pool))
+	r.Handle("/metrics", promhttp.Handler())
 
 	// Auth routes (public)
 	r.Route("/v1/auth", func(r chi.Router) {
@@ -190,8 +195,27 @@ func run(logger *slog.Logger) error {
 		r.Post("/v1/appointments/walk-in", appointmentHandler.WalkIn)
 	})
 
-	// Start reminder worker (every 5 minutes)
+	// Start metrics worker (every 5 minutes)
+	metricsWorker := worker.NewWorker(pool)
 	workerStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				workerCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				if err := metricsWorker.Run(workerCtx); err != nil {
+					logger.Error("metrics worker failed", slog.String("error", err.Error()))
+				}
+				cancel()
+			case <-workerStop:
+				return
+			}
+		}
+	}()
+
+	// Start reminder worker (every 5 minutes)
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()

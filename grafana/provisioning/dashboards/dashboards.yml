@@ -1,0 +1,15 @@
+# Auto-provision Grafana dashboards from JSON files
+# Docs: https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards
+
+apiVersion: 1
+
+providers:
+  - name: "Turnero Dashboards"
+    orgId: 1
+    folder: "Turnero"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
