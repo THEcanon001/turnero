@@ -71,6 +71,25 @@ type LoginUser struct {
 	ProviderID uuid.UUID `json:"provider_id"`
 }
 
+// JoinRequest is the input for an employee joining via invitation code.
+type JoinRequest struct {
+	Code     string `json:"code" validate:"required"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+	Phone    string `json:"phone" validate:"required"`
+}
+
+// JoinResponse is the output for a successful join.
+type JoinResponse struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	Email        string    `json:"email"`
+	ProviderID   uuid.UUID `json:"provider_id"`
+	Role         string    `json:"role"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+}
+
 // RefreshToken represents a stored refresh token.
 type RefreshToken struct {
 	ID         uuid.UUID  `json:"id"`

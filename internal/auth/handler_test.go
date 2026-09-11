@@ -183,3 +183,63 @@ func TestRegister_InvalidBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestJoin_InvalidBody(t *testing.T) {
+	handler := auth.NewHandler(nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/join", bytes.NewReader([]byte("bad")))
+	rec := httptest.NewRecorder()
+
+	handler.Join(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestJoin_ValidationError(t *testing.T) {
+	handler := auth.NewHandler(nil)
+
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{"missing code", map[string]any{"email": "e@e.com", "password": "password123", "phone": "123"}},
+		{"missing email", map[string]any{"code": "ABC123", "password": "password123", "phone": "123"}},
+		{"missing password", map[string]any{"code": "ABC123", "email": "e@e.com", "phone": "123"}},
+		{"password too short", map[string]any{"code": "ABC123", "email": "e@e.com", "password": "short", "phone": "123"}},
+		{"invalid email", map[string]any{"code": "ABC123", "email": "notanemail", "password": "password123", "phone": "123"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.body)
+			req := httptest.NewRequest(http.MethodPost, "/v1/auth/join", bytes.NewReader(body))
+			rec := httptest.NewRecorder()
+
+			handler.Join(rec, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+func TestLoginEmployee_InvalidBody(t *testing.T) {
+	handler := auth.NewHandler(nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login/employee", bytes.NewReader([]byte("bad")))
+	rec := httptest.NewRecorder()
+
+	handler.LoginEmployee(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestLoginEmployee_MissingFields(t *testing.T) {
+	handler := auth.NewHandler(nil)
+
+	body, _ := json.Marshal(map[string]any{"email": "test@example.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login/employee", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.LoginEmployee(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

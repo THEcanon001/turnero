@@ -12,6 +12,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
+	"github.com/THEcanon001/turnero/internal/employee"
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
 	"github.com/THEcanon001/turnero/internal/provider"
 )
@@ -21,15 +22,17 @@ type Handler struct {
 	service      *Service
 	repo         *Repository
 	providerRepo *provider.Repository
+	employeeRepo *employee.Repository
 	validate     *validator.Validate
 }
 
 // NewHandler creates a new appointment handler.
-func NewHandler(service *Service, repo *Repository, providerRepo *provider.Repository) *Handler {
+func NewHandler(service *Service, repo *Repository, providerRepo *provider.Repository, employeeRepo *employee.Repository) *Handler {
 	return &Handler{
 		service:      service,
 		repo:         repo,
 		providerRepo: providerRepo,
+		employeeRepo: employeeRepo,
 		validate:     validator.New(),
 	}
 }
@@ -116,32 +119,73 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check slot availability
-	slots, err := h.service.GetAvailableSlots(r.Context(), req.EmployeeID, req.Date)
-	if err != nil {
-		slog.Error("appointment.handler: check availability: " + err.Error())
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check availability")
-		return
-	}
-
-	var slotFound bool
+	// Resolve employee ID: if nil, find "any available"
+	var employeeID uuid.UUID
 	var endTime string
-	for _, slot := range slots {
-		if slot.StartTime == req.StartTime && slot.Available {
-			slotFound = true
-			endTime = slot.EndTime
-			break
-		}
-	}
 
-	if !slotFound {
-		writeError(w, http.StatusConflict, "SLOT_TAKEN", "This time slot is not available")
-		return
+	if req.EmployeeID != nil && *req.EmployeeID != uuid.Nil {
+		employeeID = *req.EmployeeID
+
+		slots, err := h.service.GetAvailableSlots(r.Context(), employeeID, req.Date)
+		if err != nil {
+			slog.Error("appointment.handler: check availability: " + err.Error())
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check availability")
+			return
+		}
+
+		var slotFound bool
+		for _, slot := range slots {
+			if slot.StartTime == req.StartTime && slot.Available {
+				slotFound = true
+				endTime = slot.EndTime
+				break
+			}
+		}
+
+		if !slotFound {
+			writeError(w, http.StatusConflict, "SLOT_TAKEN", "This time slot is not available")
+			return
+		}
+	} else {
+		// "Any available" — find first employee with the requested slot open
+		employees, err := h.employeeRepo.ListByProvider(r.Context(), p.ID)
+		if err != nil {
+			slog.Error("appointment.handler: list employees: " + err.Error())
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find employees")
+			return
+		}
+
+		var found bool
+		for _, emp := range employees {
+			if !emp.IsActive {
+				continue
+			}
+			slots, err := h.service.GetAvailableSlots(r.Context(), emp.ID, req.Date)
+			if err != nil {
+				continue
+			}
+			for _, slot := range slots {
+				if slot.StartTime == req.StartTime && slot.Available {
+					employeeID = emp.ID
+					endTime = slot.EndTime
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+
+		if !found {
+			writeError(w, http.StatusConflict, "SLOT_TAKEN", "No employees available at this time")
+			return
+		}
 	}
 
 	apt := &Appointment{
 		ProviderID:  p.ID,
-		EmployeeID:  req.EmployeeID,
+		EmployeeID:  employeeID,
 		ServiceID:   req.ServiceID,
 		ClientName:  req.ClientName,
 		ClientPhone: req.ClientPhone,

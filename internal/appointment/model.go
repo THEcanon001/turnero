@@ -35,9 +35,10 @@ type Appointment struct {
 }
 
 // CreateRequest is the input for booking an appointment.
+// EmployeeID can be omitted or set to nil UUID for "any available" assignment.
 type CreateRequest struct {
 	ProviderSlug string     `json:"provider_slug" validate:"required"`
-	EmployeeID   uuid.UUID  `json:"employee_id" validate:"required"`
+	EmployeeID   *uuid.UUID `json:"employee_id"`
 	ServiceID    *uuid.UUID `json:"service_id"`
 	ClientName   string     `json:"client_name" validate:"required,min=2,max=100"`
 	ClientPhone  string     `json:"client_phone" validate:"required"`

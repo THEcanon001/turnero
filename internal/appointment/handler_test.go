@@ -13,7 +13,7 @@ import (
 )
 
 func TestCreate_InvalidBody(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/appointments", bytes.NewReader([]byte("bad")))
 	rec := httptest.NewRecorder()
@@ -23,7 +23,7 @@ func TestCreate_InvalidBody(t *testing.T) {
 }
 
 func TestCreate_ValidationError(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	tests := []struct {
 		name string
@@ -74,7 +74,7 @@ func TestCreate_ValidationError(t *testing.T) {
 }
 
 func TestGetByID_InvalidID(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/appointments/not-uuid", nil)
 	rec := httptest.NewRecorder()
@@ -84,7 +84,7 @@ func TestGetByID_InvalidID(t *testing.T) {
 }
 
 func TestCancel_InvalidID(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/appointments/not-uuid/cancel", nil)
 	rec := httptest.NewRecorder()
@@ -94,7 +94,7 @@ func TestCancel_InvalidID(t *testing.T) {
 }
 
 func TestUpdateStatus_InvalidID(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPut, "/v1/appointments/not-uuid/status", nil)
 	rec := httptest.NewRecorder()
@@ -104,7 +104,7 @@ func TestUpdateStatus_InvalidID(t *testing.T) {
 }
 
 func TestUpdateStatus_InvalidBody(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	// Valid UUID but bad body
 	req := httptest.NewRequest(http.MethodPut, "/v1/appointments/00000000-0000-0000-0000-000000000001/status",
@@ -117,7 +117,7 @@ func TestUpdateStatus_InvalidBody(t *testing.T) {
 }
 
 func TestGetSlots_InvalidEmployeeID(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/providers/test/employees/not-uuid/slots?date=2026-09-15", nil)
 	rec := httptest.NewRecorder()
@@ -127,7 +127,7 @@ func TestGetSlots_InvalidEmployeeID(t *testing.T) {
 }
 
 func TestGetProviderProfile_EmptySlug(t *testing.T) {
-	h := appointment.NewHandler(nil, nil, nil)
+	h := appointment.NewHandler(nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/providers/", nil)
 	rec := httptest.NewRecorder()

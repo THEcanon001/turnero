@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -51,12 +52,15 @@ func (h *Handler) SetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i, req := range reqs {
+	for _, req := range reqs {
 		if err := h.validate.Struct(req); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
 			return
 		}
-		_ = i
+		if err := validateTimeRange(req.StartTime, req.EndTime); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
 	}
 
 	var schedules []Schedule
@@ -228,6 +232,22 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 		"error": message,
 		"code":  code,
 	})
+}
+
+// validateTimeRange ensures start_time is before end_time.
+func validateTimeRange(startTime, endTime string) error {
+	start, err := time.Parse("15:04", startTime)
+	if err != nil {
+		return fmt.Errorf("invalid start_time format, expected HH:MM")
+	}
+	end, err := time.Parse("15:04", endTime)
+	if err != nil {
+		return fmt.Errorf("invalid end_time format, expected HH:MM")
+	}
+	if !start.Before(end) {
+		return fmt.Errorf("start_time must be before end_time")
+	}
+	return nil
 }
 
 func formatValidationError(err error) string {

@@ -109,12 +109,12 @@ func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Provider, err
 func (r *Repository) Update(ctx context.Context, p *Provider) error {
 	query := `
 		UPDATE providers
-		SET name = $2, phone = $3, address = $4, timezone = $5
+		SET name = $2, phone = $3, address = $4, timezone = $5, business_name = $6
 		WHERE id = $1
 		RETURNING updated_at`
 
 	err := r.pool.QueryRow(ctx, query,
-		p.ID, p.Name, p.Phone, p.Address, p.Timezone,
+		p.ID, p.Name, p.Phone, p.Address, p.Timezone, p.BusinessName,
 	).Scan(&p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

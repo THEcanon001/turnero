@@ -46,10 +46,11 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	providerID := middleware.GetProviderID(r.Context())
 
 	var req struct {
-		Name     string  `json:"name" validate:"required,min=2,max=100"`
-		Phone    string  `json:"phone" validate:"required"`
-		Address  *string `json:"address"`
-		Timezone string  `json:"timezone" validate:"required"`
+		Name         string  `json:"name" validate:"required,min=2,max=100"`
+		Phone        string  `json:"phone" validate:"required"`
+		Address      *string `json:"address"`
+		Timezone     string  `json:"timezone" validate:"required"`
+		BusinessName *string `json:"business_name"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -73,6 +74,9 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	p.Phone = req.Phone
 	p.Address = req.Address
 	p.Timezone = req.Timezone
+	if req.BusinessName != nil {
+		p.BusinessName = req.BusinessName
+	}
 
 	if err := h.repo.Update(r.Context(), p); err != nil {
 		slog.Error("provider.handler: update me: " + err.Error())

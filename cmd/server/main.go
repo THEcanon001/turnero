@@ -79,8 +79,9 @@ func run(logger *slog.Logger) error {
 	authService := auth.NewService(providerRepo, employeeRepo, authRepo, jwtManager, jwtCfg)
 	authHandler := auth.NewHandler(authService)
 	providerHandler := provider.NewHandler(providerRepo)
+	employeeHandler := employee.NewHandler(employeeRepo)
 	scheduleHandler := schedule.NewHandler(scheduleRepo, employeeRepo)
-	appointmentHandler := appointment.NewHandler(appointmentService, appointmentRepo, providerRepo)
+	appointmentHandler := appointment.NewHandler(appointmentService, appointmentRepo, providerRepo, employeeRepo)
 	searchHandler := search.NewHandler(pool)
 
 	qrService := qr.NewService(cfg.QR.BaseURL, cfg.QR.OutputDir)
@@ -102,6 +103,8 @@ func run(logger *slog.Logger) error {
 	r.Route("/v1/auth", func(r chi.Router) {
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
+		r.Post("/login/employee", authHandler.LoginEmployee)
+		r.Post("/join", authHandler.Join)
 		r.Post("/refresh", authHandler.Refresh)
 		r.Post("/logout", authHandler.Logout)
 	})
@@ -129,6 +132,19 @@ func run(logger *slog.Logger) error {
 		r.Get("/v1/services/{id}", providerHandler.GetService)
 		r.Put("/v1/services/{id}", providerHandler.UpdateService)
 		r.Delete("/v1/services/{id}", providerHandler.DeleteService)
+
+		// Employees CRUD (admin only)
+		r.Route("/v1/employees", func(r chi.Router) {
+			r.Use(middleware.RequireRole("admin"))
+			r.Get("/", employeeHandler.List)
+			r.Post("/", employeeHandler.Create)
+			r.Get("/invitations", employeeHandler.ListInvitations)
+			r.Post("/invitations", employeeHandler.CreateInvitation)
+			r.Get("/{id}", employeeHandler.GetByID)
+			r.Put("/{id}", employeeHandler.Update)
+			r.Delete("/{id}", employeeHandler.Delete)
+			r.Put("/{id}/services", employeeHandler.AssignServices)
+		})
 
 		// Schedules
 		r.Put("/v1/employees/{employeeId}/schedules", scheduleHandler.SetSchedule)

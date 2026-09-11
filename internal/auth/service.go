@@ -181,10 +181,12 @@ func (s *Service) Refresh(ctx context.Context, rawRefreshToken string) (*TokenPa
 		role = "admin"
 	} else if storedToken.EmployeeID != nil {
 		userID = *storedToken.EmployeeID
-		// For employees, we'd need to look up their provider_id.
-		// For now, we use the employee ID as provider context.
-		providerID = *storedToken.EmployeeID
-		role = "employee"
+		emp, err := s.employeeRepo.GetByID(ctx, *storedToken.EmployeeID)
+		if err != nil {
+			return nil, fmt.Errorf("auth.service: employee not found")
+		}
+		providerID = emp.ProviderID
+		role = string(emp.Role)
 	}
 
 	// Generate new tokens
@@ -219,6 +221,119 @@ func (s *Service) Refresh(ctx context.Context, rawRefreshToken string) (*TokenPa
 		RefreshToken: newRefreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    int(s.jwtCfg.AccessTokenExpiry.Seconds()),
+	}, nil
+}
+
+// Join allows an employee to accept an invitation code and create their account.
+func (s *Service) Join(ctx context.Context, req JoinRequest) (*JoinResponse, error) {
+	inv, err := s.employeeRepo.GetInvitationByCode(ctx, req.Code)
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: hash password: %w", err)
+	}
+
+	hashStr := string(hash)
+	emp := &employee.Employee{
+		ProviderID:   inv.ProviderID,
+		Name:         inv.EmployeeName,
+		Phone:        req.Phone,
+		Role:         employee.RoleEmployee,
+		Email:        &req.Email,
+		PasswordHash: &hashStr,
+	}
+
+	if err := s.employeeRepo.Create(ctx, emp); err != nil {
+		return nil, fmt.Errorf("auth.service: create employee: %w", err)
+	}
+
+	if err := s.employeeRepo.MarkInvitationUsed(ctx, inv.ID, emp.ID); err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	accessToken, err := s.jwtManager.GenerateAccessToken(emp.ID, inv.ProviderID, string(emp.Role))
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	refreshToken, err := s.jwtManager.GenerateRefreshToken(emp.ID, inv.ProviderID, string(emp.Role))
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	rt := &RefreshToken{
+		EmployeeID: &emp.ID,
+		TokenHash:  HashToken(refreshToken),
+		ExpiresAt:  time.Now().Add(s.jwtCfg.RefreshTokenExpiry),
+	}
+	if err := s.authRepo.StoreRefreshToken(ctx, rt); err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	return &JoinResponse{
+		ID:           emp.ID,
+		Name:         emp.Name,
+		Email:        req.Email,
+		ProviderID:   inv.ProviderID,
+		Role:         string(emp.Role),
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}, nil
+}
+
+// LoginEmployee authenticates an employee by email/password.
+func (s *Service) LoginEmployee(ctx context.Context, req LoginRequest) (*LoginResponse, error) {
+	emp, err := s.employeeRepo.GetByEmail(ctx, req.Email)
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: invalid credentials")
+	}
+
+	if emp.PasswordHash == nil {
+		return nil, fmt.Errorf("auth.service: invalid credentials")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(*emp.PasswordHash), []byte(req.Password)); err != nil {
+		return nil, fmt.Errorf("auth.service: invalid credentials")
+	}
+
+	if !emp.IsActive {
+		return nil, fmt.Errorf("auth.service: account deactivated")
+	}
+
+	accessToken, err := s.jwtManager.GenerateAccessToken(emp.ID, emp.ProviderID, string(emp.Role))
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	refreshToken, err := s.jwtManager.GenerateRefreshToken(emp.ID, emp.ProviderID, string(emp.Role))
+	if err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	rt := &RefreshToken{
+		EmployeeID: &emp.ID,
+		TokenHash:  HashToken(refreshToken),
+		ExpiresAt:  time.Now().Add(s.jwtCfg.RefreshTokenExpiry),
+	}
+	if err := s.authRepo.StoreRefreshToken(ctx, rt); err != nil {
+		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	return &LoginResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(s.jwtCfg.AccessTokenExpiry.Seconds()),
+		User: LoginUser{
+			ID:         emp.ID,
+			Name:       emp.Name,
+			Role:       string(emp.Role),
+			Type:       "employee",
+			ProviderID: emp.ProviderID,
+		},
 	}, nil
 }
 

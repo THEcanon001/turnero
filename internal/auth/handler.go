@@ -129,6 +129,64 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Join handles POST /v1/auth/join.
+func (h *Handler) Join(w http.ResponseWriter, r *http.Request) {
+	var req JoinRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
+		return
+	}
+
+	resp, err := h.service.Join(r.Context(), req)
+	if err != nil {
+		slog.Warn("auth.handler: join: " + err.Error())
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "expired") {
+			writeError(w, http.StatusBadRequest, "INVALID_CODE", "Invalid or expired invitation code")
+			return
+		}
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
+			writeError(w, http.StatusConflict, "CONFLICT", "Email already in use")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Join failed")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+// LoginEmployee handles POST /v1/auth/login/employee.
+func (h *Handler) LoginEmployee(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
+		return
+	}
+
+	resp, err := h.service.LoginEmployee(r.Context(), req)
+	if err != nil {
+		slog.Warn("auth.handler: login employee: " + err.Error())
+		if strings.Contains(err.Error(), "deactivated") {
+			writeError(w, http.StatusForbidden, "ACCOUNT_DEACTIVATED", "Account has been deactivated")
+			return
+		}
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid email or password")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // writeJSON writes a JSON response.
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
