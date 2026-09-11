@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/THEcanon001/turnero/internal/appointment"
 	"github.com/THEcanon001/turnero/internal/auth"
 	"github.com/THEcanon001/turnero/internal/employee"
 	"github.com/THEcanon001/turnero/internal/platform/config"
@@ -19,6 +20,7 @@ import (
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
 	"github.com/THEcanon001/turnero/internal/provider"
 	"github.com/THEcanon001/turnero/internal/schedule"
+	"github.com/THEcanon001/turnero/internal/search"
 	tjwt "github.com/THEcanon001/turnero/pkg/jwt"
 )
 
@@ -70,10 +72,15 @@ func run(logger *slog.Logger) error {
 	scheduleRepo := schedule.NewRepository(pool)
 	authRepo := auth.NewRepository(pool)
 
+	appointmentRepo := appointment.NewRepository(pool)
+	appointmentService := appointment.NewService(appointmentRepo, scheduleRepo)
+
 	authService := auth.NewService(providerRepo, employeeRepo, authRepo, jwtManager, jwtCfg)
 	authHandler := auth.NewHandler(authService)
 	providerHandler := provider.NewHandler(providerRepo)
 	scheduleHandler := schedule.NewHandler(scheduleRepo, employeeRepo)
+	appointmentHandler := appointment.NewHandler(appointmentService, appointmentRepo, providerRepo)
+	searchHandler := search.NewHandler(pool)
 
 	// Router
 	r := chi.NewRouter()
@@ -94,6 +101,14 @@ func run(logger *slog.Logger) error {
 		r.Post("/refresh", authHandler.Refresh)
 		r.Post("/logout", authHandler.Logout)
 	})
+
+	// Public routes (no auth)
+	r.Get("/v1/search", searchHandler.Search)
+	r.Get("/v1/providers/{slug}", appointmentHandler.GetProviderProfile)
+	r.Get("/v1/providers/{slug}/employees/{employeeId}/slots", appointmentHandler.GetSlots)
+	r.Post("/v1/appointments", appointmentHandler.Create)
+	r.Get("/v1/appointments/{id}", appointmentHandler.GetByID)
+	r.Post("/v1/appointments/{id}/cancel", appointmentHandler.Cancel)
 
 	// Authenticated routes
 	r.Group(func(r chi.Router) {
@@ -116,6 +131,10 @@ func run(logger *slog.Logger) error {
 		r.Post("/v1/employees/{employeeId}/schedule-exceptions", scheduleHandler.AddException)
 		r.Get("/v1/employees/{employeeId}/schedule-exceptions", scheduleHandler.ListExceptions)
 		r.Delete("/v1/schedule-exceptions/{id}", scheduleHandler.DeleteException)
+
+		// Appointments (provider management)
+		r.Get("/v1/appointments", appointmentHandler.ListByProvider)
+		r.Put("/v1/appointments/{id}/status", appointmentHandler.UpdateStatus)
 	})
 
 	// Server
