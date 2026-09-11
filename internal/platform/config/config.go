@@ -8,10 +8,15 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	JWT      JWTConfig
-	QR       QRConfig
+	Server       ServerConfig
+	Database     DatabaseConfig
+	JWT          JWTConfig
+	QR           QRConfig
+	Notification NotificationConfig
+}
+
+type NotificationConfig struct {
+	FCMAPIKey string `env:"FCM_API_KEY"`
 }
 
 type ServerConfig struct {

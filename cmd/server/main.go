@@ -15,6 +15,7 @@ import (
 	"github.com/THEcanon001/turnero/internal/appointment"
 	"github.com/THEcanon001/turnero/internal/auth"
 	"github.com/THEcanon001/turnero/internal/employee"
+	"github.com/THEcanon001/turnero/internal/notification"
 	"github.com/THEcanon001/turnero/internal/platform/config"
 	"github.com/THEcanon001/turnero/internal/platform/database"
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
@@ -89,6 +90,11 @@ func run(logger *slog.Logger) error {
 	qrService := qr.NewService(cfg.QR.BaseURL, cfg.QR.OutputDir)
 	qrHandler := qr.NewHandler(qrService, providerRepo)
 
+	notifRepo := notification.NewRepository(pool)
+	notifService := notification.NewService(notifRepo, "", cfg.Notification.FCMAPIKey)
+	notifHandler := notification.NewHandler(notifRepo)
+	notifWorker := notification.NewWorker(pool, notifService)
+
 	// Router
 	r := chi.NewRouter()
 
@@ -156,6 +162,10 @@ func run(logger *slog.Logger) error {
 		r.Get("/v1/employees/{employeeId}/schedule-exceptions", scheduleHandler.ListExceptions)
 		r.Delete("/v1/schedule-exceptions/{id}", scheduleHandler.DeleteException)
 
+		// Push tokens
+		r.Post("/v1/push-tokens", notifHandler.RegisterToken)
+		r.Delete("/v1/push-tokens", notifHandler.DeregisterToken)
+
 		// Appointments (provider management)
 		r.Get("/v1/appointments", appointmentHandler.ListByProvider)
 		r.Put("/v1/appointments/{id}/status", appointmentHandler.UpdateStatus)
@@ -163,6 +173,25 @@ func run(logger *slog.Logger) error {
 		r.Put("/v1/appointments/{id}/reassign", appointmentHandler.Reassign)
 		r.Post("/v1/appointments/walk-in", appointmentHandler.WalkIn)
 	})
+
+	// Start reminder worker (every 5 minutes)
+	workerStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				workerCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				if err := notifWorker.RunReminders(workerCtx); err != nil {
+					logger.Error("reminder worker failed", slog.String("error", err.Error()))
+				}
+				cancel()
+			case <-workerStop:
+				return
+			}
+		}
+	}()
 
 	// Server
 	srv := &http.Server{
@@ -197,6 +226,7 @@ func run(logger *slog.Logger) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer shutdownCancel()
 
+	close(workerStop)
 	logger.Info("shutting down server")
 	return srv.Shutdown(shutdownCtx)
 }
