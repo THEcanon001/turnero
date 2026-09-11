@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/THEcanon001/turnero/internal/employee"
 	"github.com/THEcanon001/turnero/internal/provider"
 	tjwt "github.com/THEcanon001/turnero/pkg/jwt"
 )
@@ -17,6 +18,7 @@ const bcryptCost = 12
 // Service handles authentication business logic.
 type Service struct {
 	providerRepo *provider.Repository
+	employeeRepo *employee.Repository
 	authRepo     *Repository
 	jwtManager   *tjwt.Manager
 	jwtCfg       tjwt.Config
@@ -25,12 +27,14 @@ type Service struct {
 // NewService creates a new auth service.
 func NewService(
 	providerRepo *provider.Repository,
+	employeeRepo *employee.Repository,
 	authRepo *Repository,
 	jwtManager *tjwt.Manager,
 	jwtCfg tjwt.Config,
 ) *Service {
 	return &Service{
 		providerRepo: providerRepo,
+		employeeRepo: employeeRepo,
 		authRepo:     authRepo,
 		jwtManager:   jwtManager,
 		jwtCfg:       jwtCfg,
@@ -62,6 +66,20 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (*RegisterR
 
 	if err := s.providerRepo.Create(ctx, p); err != nil {
 		return nil, fmt.Errorf("auth.service: %w", err)
+	}
+
+	// Auto-create "self" employee for individual (PF) providers
+	if p.Type == provider.TypeIndividual {
+		selfEmployee := &employee.Employee{
+			ProviderID: p.ID,
+			Name:       p.Name,
+			Phone:      p.Phone,
+			Role:       employee.RoleAdmin,
+			Email:      &p.Email,
+		}
+		if err := s.employeeRepo.Create(ctx, selfEmployee); err != nil {
+			return nil, fmt.Errorf("auth.service: create self employee: %w", err)
+		}
 	}
 
 	// Generate tokens

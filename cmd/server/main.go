@@ -13,10 +13,12 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/THEcanon001/turnero/internal/auth"
+	"github.com/THEcanon001/turnero/internal/employee"
 	"github.com/THEcanon001/turnero/internal/platform/config"
 	"github.com/THEcanon001/turnero/internal/platform/database"
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
 	"github.com/THEcanon001/turnero/internal/provider"
+	"github.com/THEcanon001/turnero/internal/schedule"
 	tjwt "github.com/THEcanon001/turnero/pkg/jwt"
 )
 
@@ -64,9 +66,14 @@ func run(logger *slog.Logger) error {
 	jwtManager := tjwt.NewManager(jwtCfg)
 
 	providerRepo := provider.NewRepository(pool)
+	employeeRepo := employee.NewRepository(pool)
+	scheduleRepo := schedule.NewRepository(pool)
 	authRepo := auth.NewRepository(pool)
-	authService := auth.NewService(providerRepo, authRepo, jwtManager, jwtCfg)
+
+	authService := auth.NewService(providerRepo, employeeRepo, authRepo, jwtManager, jwtCfg)
 	authHandler := auth.NewHandler(authService)
+	providerHandler := provider.NewHandler(providerRepo)
+	scheduleHandler := schedule.NewHandler(scheduleRepo, employeeRepo)
 
 	// Router
 	r := chi.NewRouter()
@@ -88,10 +95,27 @@ func run(logger *slog.Logger) error {
 		r.Post("/logout", authHandler.Logout)
 	})
 
-	// Authenticated routes (example placeholder)
+	// Authenticated routes
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(jwtManager))
-		// Provider routes will be added in Phase 2+
+
+		// Provider profile
+		r.Get("/v1/provider/me", providerHandler.GetMe)
+		r.Put("/v1/provider/me", providerHandler.UpdateMe)
+
+		// Services CRUD
+		r.Post("/v1/services", providerHandler.CreateService)
+		r.Get("/v1/services", providerHandler.ListServices)
+		r.Get("/v1/services/{id}", providerHandler.GetService)
+		r.Put("/v1/services/{id}", providerHandler.UpdateService)
+		r.Delete("/v1/services/{id}", providerHandler.DeleteService)
+
+		// Schedules
+		r.Put("/v1/employees/{employeeId}/schedules", scheduleHandler.SetSchedule)
+		r.Get("/v1/employees/{employeeId}/schedules", scheduleHandler.GetSchedule)
+		r.Post("/v1/employees/{employeeId}/schedule-exceptions", scheduleHandler.AddException)
+		r.Get("/v1/employees/{employeeId}/schedule-exceptions", scheduleHandler.ListExceptions)
+		r.Delete("/v1/schedule-exceptions/{id}", scheduleHandler.DeleteException)
 	})
 
 	// Server
