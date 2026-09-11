@@ -1,0 +1,126 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/THEcanon001/turnero/internal/platform/config"
+	"github.com/THEcanon001/turnero/internal/platform/database"
+	"github.com/THEcanon001/turnero/internal/platform/middleware"
+)
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
+	if err := run(logger); err != nil {
+		logger.Error("server failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Database
+	pool, err := database.New(ctx, cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	logger.Info("database connected")
+
+	// Run migrations
+	if err := database.Migrate(cfg.Database.DSN()); err != nil {
+		return err
+	}
+	logger.Info("migrations applied")
+
+	// Router
+	r := chi.NewRouter()
+
+	// Global middleware
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Recovery(logger))
+	r.Use(middleware.Logging(logger))
+	r.Use(middleware.CORS([]string{"*"})) // Restrict in production
+
+	// Health endpoint
+	r.Get("/health", healthHandler(pool))
+
+	// Server
+	srv := &http.Server{
+		Addr:         cfg.Server.Addr(),
+		Handler:      r,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+	}
+
+	// Graceful shutdown
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("server starting", slog.String("addr", cfg.Server.Addr()))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-quit:
+		logger.Info("shutdown signal received", slog.String("signal", sig.String()))
+	case err := <-errCh:
+		if err != nil {
+			return err
+		}
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+	defer shutdownCancel()
+
+	logger.Info("shutting down server")
+	return srv.Shutdown(shutdownCtx)
+}
+
+type dbPinger interface {
+	Ping(ctx context.Context) error
+}
+
+func healthHandler(db dbPinger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		status := "ok"
+		dbStatus := "ok"
+
+		if err := db.Ping(r.Context()); err != nil {
+			status = "degraded"
+			dbStatus = "error"
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if status != "ok" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":   status,
+			"database": dbStatus,
+		})
+	}
+}
