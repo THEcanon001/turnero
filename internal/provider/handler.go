@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -13,10 +14,33 @@ import (
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
 )
 
+// StatsProvider is the interface for getting appointment statistics.
+type StatsProvider interface {
+	GetStats(ctx context.Context, providerID uuid.UUID, fromDate, toDate string) (*StatsResult, error)
+	GetStatsByEmployee(ctx context.Context, providerID uuid.UUID, fromDate, toDate string) ([]EmployeeStatsResult, error)
+}
+
+// StatsResult holds aggregated appointment stats.
+type StatsResult struct {
+	Total     int `json:"total"`
+	Confirmed int `json:"confirmed"`
+	Completed int `json:"completed"`
+	Cancelled int `json:"cancelled"`
+	NoShow    int `json:"no_show"`
+}
+
+// EmployeeStatsResult holds per-employee stats.
+type EmployeeStatsResult struct {
+	EmployeeID   uuid.UUID    `json:"employee_id"`
+	EmployeeName string       `json:"employee_name"`
+	Stats        StatsResult  `json:"stats"`
+}
+
 // Handler handles HTTP requests for provider and services.
 type Handler struct {
-	repo     *Repository
-	validate *validator.Validate
+	repo          *Repository
+	statsProvider StatsProvider
+	validate      *validator.Validate
 }
 
 // NewHandler creates a new provider handler.
@@ -25,6 +49,11 @@ func NewHandler(repo *Repository) *Handler {
 		repo:     repo,
 		validate: validator.New(),
 	}
+}
+
+// SetStatsProvider sets the stats provider for the handler.
+func (h *Handler) SetStatsProvider(sp StatsProvider) {
+	h.statsProvider = sp
 }
 
 // GetMe handles GET /v1/provider/me.
@@ -232,6 +261,43 @@ func (h *Handler) DeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetStats handles GET /v1/provider/me/stats?from=YYYY-MM-DD&to=YYYY-MM-DD.
+func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
+	if h.statsProvider == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Stats not configured")
+		return
+	}
+
+	providerID := middleware.GetProviderID(r.Context())
+
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	if from == "" || to == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "from and to query params required (YYYY-MM-DD)")
+		return
+	}
+
+	stats, err := h.statsProvider.GetStats(r.Context(), providerID, from, to)
+	if err != nil {
+		slog.Error("provider.handler: get stats: " + err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get stats")
+		return
+	}
+
+	byEmployee, err := h.statsProvider.GetStatsByEmployee(r.Context(), providerID, from, to)
+	if err != nil {
+		slog.Error("provider.handler: get stats by employee: " + err.Error())
+		byEmployee = []EmployeeStatsResult{}
+	}
+
+	resp := map[string]any{
+		"summary":     stats,
+		"by_employee": byEmployee,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

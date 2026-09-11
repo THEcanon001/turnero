@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/THEcanon001/turnero/internal/appointment"
 	"github.com/THEcanon001/turnero/internal/auth"
@@ -80,6 +81,7 @@ func run(logger *slog.Logger) error {
 	authService := auth.NewService(providerRepo, employeeRepo, authRepo, jwtManager, jwtCfg)
 	authHandler := auth.NewHandler(authService)
 	providerHandler := provider.NewHandler(providerRepo)
+	providerHandler.SetStatsProvider(&statsAdapter{appointmentRepo: appointmentRepo})
 	employeeHandler := employee.NewHandler(employeeRepo)
 	employeeHandler.SetAppointmentCanceller(appointmentRepo)
 	scheduleHandler := schedule.NewHandler(scheduleRepo, employeeRepo)
@@ -134,6 +136,7 @@ func run(logger *slog.Logger) error {
 		r.Get("/v1/provider/me", providerHandler.GetMe)
 		r.Put("/v1/provider/me", providerHandler.UpdateMe)
 		r.Get("/v1/provider/me/qr", qrHandler.GetQR)
+		r.Get("/v1/provider/me/stats", providerHandler.GetStats)
 
 		// Services CRUD
 		r.Post("/v1/services", providerHandler.CreateService)
@@ -233,6 +236,47 @@ func run(logger *slog.Logger) error {
 
 type dbPinger interface {
 	Ping(ctx context.Context) error
+}
+
+// statsAdapter bridges the appointment.Repository to the provider.StatsProvider interface.
+type statsAdapter struct {
+	appointmentRepo *appointment.Repository
+}
+
+func (a *statsAdapter) GetStats(ctx context.Context, providerID uuid.UUID, fromDate, toDate string) (*provider.StatsResult, error) {
+	s, err := a.appointmentRepo.GetStats(ctx, providerID, fromDate, toDate)
+	if err != nil {
+		return nil, err
+	}
+	return &provider.StatsResult{
+		Total:     s.Total,
+		Confirmed: s.Confirmed,
+		Completed: s.Completed,
+		Cancelled: s.Cancelled,
+		NoShow:    s.NoShow,
+	}, nil
+}
+
+func (a *statsAdapter) GetStatsByEmployee(ctx context.Context, providerID uuid.UUID, fromDate, toDate string) ([]provider.EmployeeStatsResult, error) {
+	es, err := a.appointmentRepo.GetStatsByEmployee(ctx, providerID, fromDate, toDate)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]provider.EmployeeStatsResult, len(es))
+	for i, e := range es {
+		result[i] = provider.EmployeeStatsResult{
+			EmployeeID:   e.EmployeeID,
+			EmployeeName: e.EmployeeName,
+			Stats: provider.StatsResult{
+				Total:     e.Stats.Total,
+				Confirmed: e.Stats.Confirmed,
+				Completed: e.Stats.Completed,
+				Cancelled: e.Stats.Cancelled,
+				NoShow:    e.Stats.NoShow,
+			},
+		}
+	}
+	return result, nil
 }
 
 func healthHandler(db dbPinger) http.HandlerFunc {

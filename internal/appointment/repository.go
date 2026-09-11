@@ -192,6 +192,82 @@ func (r *Repository) CancelByEmployeeAndDateRange(ctx context.Context, employeeI
 	return result.RowsAffected(), nil
 }
 
+// Stats holds aggregated appointment statistics.
+type Stats struct {
+	Total     int `json:"total"`
+	Confirmed int `json:"confirmed"`
+	Completed int `json:"completed"`
+	Cancelled int `json:"cancelled"`
+	NoShow    int `json:"no_show"`
+}
+
+// EmployeeStats holds stats for a specific employee.
+type EmployeeStats struct {
+	EmployeeID   uuid.UUID `json:"employee_id"`
+	EmployeeName string    `json:"employee_name"`
+	Stats        Stats     `json:"stats"`
+}
+
+// GetStats returns aggregated stats for a provider within a date range.
+func (r *Repository) GetStats(ctx context.Context, providerID uuid.UUID, fromDate, toDate string) (*Stats, error) {
+	query := `
+		SELECT
+			COUNT(*) as total,
+			COUNT(*) FILTER (WHERE status = 'confirmed') as confirmed,
+			COUNT(*) FILTER (WHERE status = 'completed') as completed,
+			COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+			COUNT(*) FILTER (WHERE status = 'no_show') as no_show
+		FROM appointments
+		WHERE provider_id = $1 AND date >= $2::date AND date <= $3::date`
+
+	s := &Stats{}
+	err := r.pool.QueryRow(ctx, query, providerID, fromDate, toDate).Scan(
+		&s.Total, &s.Confirmed, &s.Completed, &s.Cancelled, &s.NoShow,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("appointment.repository: get stats: %w", err)
+	}
+	return s, nil
+}
+
+// GetStatsByEmployee returns stats broken down by employee for a provider within a date range.
+func (r *Repository) GetStatsByEmployee(ctx context.Context, providerID uuid.UUID, fromDate, toDate string) ([]EmployeeStats, error) {
+	query := `
+		SELECT
+			e.id, e.name,
+			COUNT(*) as total,
+			COUNT(*) FILTER (WHERE a.status = 'confirmed') as confirmed,
+			COUNT(*) FILTER (WHERE a.status = 'completed') as completed,
+			COUNT(*) FILTER (WHERE a.status = 'cancelled') as cancelled,
+			COUNT(*) FILTER (WHERE a.status = 'no_show') as no_show
+		FROM employees e
+		LEFT JOIN appointments a ON a.employee_id = e.id
+			AND a.date >= $2::date AND a.date <= $3::date
+		WHERE e.provider_id = $1
+		GROUP BY e.id, e.name
+		ORDER BY total DESC`
+
+	rows, err := r.pool.Query(ctx, query, providerID, fromDate, toDate)
+	if err != nil {
+		return nil, fmt.Errorf("appointment.repository: get stats by employee: %w", err)
+	}
+	defer rows.Close()
+
+	var result []EmployeeStats
+	for rows.Next() {
+		var es EmployeeStats
+		if err := rows.Scan(
+			&es.EmployeeID, &es.EmployeeName,
+			&es.Stats.Total, &es.Stats.Confirmed, &es.Stats.Completed,
+			&es.Stats.Cancelled, &es.Stats.NoShow,
+		); err != nil {
+			return nil, fmt.Errorf("appointment.repository: scan employee stats: %w", err)
+		}
+		result = append(result, es)
+	}
+	return result, rows.Err()
+}
+
 // ListByEmployeeAndDate returns confirmed appointments for an employee on a given date.
 // Used for slot availability calculation.
 func (r *Repository) ListByEmployeeAndDate(ctx context.Context, employeeID uuid.UUID, date string) ([]Appointment, error) {
