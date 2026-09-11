@@ -12,9 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/THEcanon001/turnero/internal/auth"
 	"github.com/THEcanon001/turnero/internal/platform/config"
 	"github.com/THEcanon001/turnero/internal/platform/database"
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
+	"github.com/THEcanon001/turnero/internal/provider"
+	tjwt "github.com/THEcanon001/turnero/pkg/jwt"
 )
 
 func main() {
@@ -51,6 +54,20 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("migrations applied")
 
+	// Dependencies
+	jwtCfg := tjwt.Config{
+		Secret:             cfg.JWT.Secret,
+		AccessTokenExpiry:  cfg.JWT.AccessTokenExpiry,
+		RefreshTokenExpiry: cfg.JWT.RefreshTokenExpiry,
+		Issuer:             cfg.JWT.Issuer,
+	}
+	jwtManager := tjwt.NewManager(jwtCfg)
+
+	providerRepo := provider.NewRepository(pool)
+	authRepo := auth.NewRepository(pool)
+	authService := auth.NewService(providerRepo, authRepo, jwtManager, jwtCfg)
+	authHandler := auth.NewHandler(authService)
+
 	// Router
 	r := chi.NewRouter()
 
@@ -62,6 +79,20 @@ func run(logger *slog.Logger) error {
 
 	// Health endpoint
 	r.Get("/health", healthHandler(pool))
+
+	// Auth routes (public)
+	r.Route("/v1/auth", func(r chi.Router) {
+		r.Post("/register", authHandler.Register)
+		r.Post("/login", authHandler.Login)
+		r.Post("/refresh", authHandler.Refresh)
+		r.Post("/logout", authHandler.Logout)
+	})
+
+	// Authenticated routes (example placeholder)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Auth(jwtManager))
+		// Provider routes will be added in Phase 2+
+	})
 
 	// Server
 	srv := &http.Server{
