@@ -82,13 +82,14 @@ func (h *Handler) GetProviderProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"id":       p.ID,
-		"name":     p.Name,
-		"slug":     p.Slug,
-		"phone":    p.Phone,
-		"address":  p.Address,
-		"type":     p.Type,
-		"services": services,
+		"id":            p.ID,
+		"name":          p.Name,
+		"slug":          p.Slug,
+		"phone":         p.Phone,
+		"address":       p.Address,
+		"type":          p.Type,
+		"services":      services,
+		"whatsapp_link": WhatsAppLink(p.Phone, ""),
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -160,7 +161,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, apt)
+	resp := map[string]any{
+		"appointment":   apt,
+		"whatsapp_link": AppointmentWhatsAppLink(p.Phone, apt.ClientName, apt.Date, apt.StartTime),
+	}
+
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // GetByID handles GET /v1/appointments/{id}.
@@ -177,7 +183,18 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, apt)
+	p, err := h.providerRepo.GetByID(r.Context(), apt.ProviderID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, apt)
+		return
+	}
+
+	resp := map[string]any{
+		"appointment":   apt,
+		"whatsapp_link": AppointmentWhatsAppLink(p.Phone, apt.ClientName, apt.Date, apt.StartTime),
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Cancel handles POST /v1/appointments/{id}/cancel.

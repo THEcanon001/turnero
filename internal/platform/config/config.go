@@ -11,6 +11,7 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	JWT      JWTConfig
+	QR       QRConfig
 }
 
 type ServerConfig struct {
@@ -48,6 +49,11 @@ type JWTConfig struct {
 	AccessTokenExpiry  time.Duration `env:"JWT_ACCESS_EXPIRY" envDefault:"15m"`
 	RefreshTokenExpiry time.Duration `env:"JWT_REFRESH_EXPIRY" envDefault:"168h"`
 	Issuer             string        `env:"JWT_ISSUER" envDefault:"turnero"`
+}
+
+type QRConfig struct {
+	BaseURL   string `env:"QR_BASE_URL" envDefault:"https://turnero.app"`
+	OutputDir string `env:"QR_OUTPUT_DIR" envDefault:"/var/data/qr"`
 }
 
 func Load() (Config, error) {

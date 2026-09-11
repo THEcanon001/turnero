@@ -19,6 +19,7 @@ import (
 	"github.com/THEcanon001/turnero/internal/platform/database"
 	"github.com/THEcanon001/turnero/internal/platform/middleware"
 	"github.com/THEcanon001/turnero/internal/provider"
+	"github.com/THEcanon001/turnero/internal/qr"
 	"github.com/THEcanon001/turnero/internal/schedule"
 	"github.com/THEcanon001/turnero/internal/search"
 	tjwt "github.com/THEcanon001/turnero/pkg/jwt"
@@ -82,6 +83,9 @@ func run(logger *slog.Logger) error {
 	appointmentHandler := appointment.NewHandler(appointmentService, appointmentRepo, providerRepo)
 	searchHandler := search.NewHandler(pool)
 
+	qrService := qr.NewService(cfg.QR.BaseURL, cfg.QR.OutputDir)
+	qrHandler := qr.NewHandler(qrService, providerRepo)
+
 	// Router
 	r := chi.NewRouter()
 
@@ -117,6 +121,7 @@ func run(logger *slog.Logger) error {
 		// Provider profile
 		r.Get("/v1/provider/me", providerHandler.GetMe)
 		r.Put("/v1/provider/me", providerHandler.UpdateMe)
+		r.Get("/v1/provider/me/qr", qrHandler.GetQR)
 
 		// Services CRUD
 		r.Post("/v1/services", providerHandler.CreateService)
