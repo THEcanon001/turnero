@@ -15,6 +15,7 @@ import (
 
 	"github.com/THEcanon001/turnero/internal/appointment"
 	"github.com/THEcanon001/turnero/internal/auth"
+	"github.com/THEcanon001/turnero/internal/billing"
 	"github.com/THEcanon001/turnero/internal/employee"
 	"github.com/THEcanon001/turnero/internal/notification"
 	"github.com/THEcanon001/turnero/internal/platform/config"
@@ -97,6 +98,13 @@ func run(logger *slog.Logger) error {
 	notifHandler := notification.NewHandler(notifRepo)
 	notifWorker := notification.NewWorker(pool, notifService)
 
+	// Billing
+	billingRepo := billing.NewRepository(pool)
+	billingService := billing.NewService(billingRepo)
+	billingHandler := billing.NewHandler(billingService, billingRepo)
+	billingWorker := billing.NewWorker(pool, billingService, billingRepo, &notifAdapter{notifService: notifService})
+	appointmentHandler.SetBillingRecorder(&billingAdapter{billingService: billingService})
+
 	// Router
 	r := chi.NewRouter()
 
@@ -169,6 +177,11 @@ func run(logger *slog.Logger) error {
 		r.Post("/v1/push-tokens", notifHandler.RegisterToken)
 		r.Delete("/v1/push-tokens", notifHandler.DeregisterToken)
 
+		// Billing
+		r.Get("/v1/billing/usage", billingHandler.GetCurrentUsage)
+		r.Get("/v1/billing/history", billingHandler.GetUsageHistory)
+		r.Get("/v1/billing/transactions", billingHandler.GetTransactions)
+
 		// Appointments (provider management)
 		r.Get("/v1/appointments", appointmentHandler.ListByProvider)
 		r.Put("/v1/appointments/{id}/status", appointmentHandler.UpdateStatus)
@@ -190,6 +203,32 @@ func run(logger *slog.Logger) error {
 					logger.Error("reminder worker failed", slog.String("error", err.Error()))
 				}
 				cancel()
+			case <-workerStop:
+				return
+			}
+		}
+	}()
+
+	// Start monthly billing worker (checks every hour, runs cycle on 1st of month)
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		var lastRunMonth time.Month
+		for {
+			select {
+			case <-ticker.C:
+				now := time.Now()
+				if now.Day() == 1 && now.Month() != lastRunMonth {
+					workerCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					if err := billingWorker.RunMonthlyCycle(workerCtx); err != nil {
+						logger.Error("billing monthly cycle failed", slog.String("error", err.Error()))
+					}
+					if err := billingWorker.RunInvoiceNotifications(workerCtx); err != nil {
+						logger.Error("billing invoice notifications failed", slog.String("error", err.Error()))
+					}
+					cancel()
+					lastRunMonth = now.Month()
+				}
 			case <-workerStop:
 				return
 			}
@@ -277,6 +316,29 @@ func (a *statsAdapter) GetStatsByEmployee(ctx context.Context, providerID uuid.U
 		}
 	}
 	return result, nil
+}
+
+// billingAdapter bridges billing.Service to appointment.BillingRecorder interface.
+type billingAdapter struct {
+	billingService *billing.Service
+}
+
+func (a *billingAdapter) RecordCompletion(ctx context.Context, providerID uuid.UUID) (bool, error) {
+	_, exceeded, err := a.billingService.RecordCompletion(ctx, providerID)
+	return exceeded, err
+}
+
+// notifAdapter bridges notification.Service to billing.NotificationSender interface.
+type notifAdapter struct {
+	notifService *notification.Service
+}
+
+func (a *notifAdapter) SendToProvider(ctx context.Context, providerID uuid.UUID, msg billing.NotificationMessage) error {
+	return a.notifService.SendToProvider(ctx, providerID, notification.Message{
+		Title: msg.Title,
+		Body:  msg.Body,
+		Data:  msg.Data,
+	})
 }
 
 func healthHandler(db dbPinger) http.HandlerFunc {

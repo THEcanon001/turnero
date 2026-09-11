@@ -1,6 +1,7 @@
 package appointment
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -20,13 +21,19 @@ import (
 
 const cancelDeadlineHours = 2
 
+// BillingRecorder records completed appointments for billing purposes.
+type BillingRecorder interface {
+	RecordCompletion(ctx context.Context, providerID uuid.UUID) (exceededFreeTier bool, err error)
+}
+
 // Handler handles HTTP requests for appointments and availability.
 type Handler struct {
-	service      *Service
-	repo         *Repository
-	providerRepo *provider.Repository
-	employeeRepo *employee.Repository
-	validate     *validator.Validate
+	service         *Service
+	repo            *Repository
+	providerRepo    *provider.Repository
+	employeeRepo    *employee.Repository
+	validate        *validator.Validate
+	billingRecorder BillingRecorder
 }
 
 // NewHandler creates a new appointment handler.
@@ -38,6 +45,11 @@ func NewHandler(service *Service, repo *Repository, providerRepo *provider.Repos
 		employeeRepo: employeeRepo,
 		validate:     validator.New(),
 	}
+}
+
+// SetBillingRecorder sets the billing recorder for tracking completed appointments.
+func (h *Handler) SetBillingRecorder(br BillingRecorder) {
+	h.billingRecorder = br
 }
 
 // GetSlots handles GET /v1/providers/{slug}/employees/{employeeId}/slots?date=YYYY-MM-DD.
@@ -623,6 +635,17 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		slog.Error("appointment.handler: update status: " + err.Error())
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update status")
 		return
+	}
+
+	// Record billing when an appointment is completed
+	if req.Status == StatusCompleted && h.billingRecorder != nil {
+		exceeded, err := h.billingRecorder.RecordCompletion(r.Context(), providerID)
+		if err != nil {
+			slog.Error("appointment.handler: record billing: " + err.Error())
+		} else if exceeded {
+			slog.Info("appointment.handler: provider exceeded free tier",
+				slog.String("provider_id", providerID.String()))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": string(req.Status)})
