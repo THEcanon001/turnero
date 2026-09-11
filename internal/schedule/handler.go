@@ -69,7 +69,7 @@ func (h *Handler) SetSchedule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", formatValidationError(err))
 			return
 		}
-		if err := validateTimeRange(req.StartTime, req.EndTime); err != nil {
+		if err := ValidateTimeRange(req.StartTime, req.EndTime); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 			return
 		}
@@ -264,8 +264,8 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-// validateTimeRange ensures start_time is before end_time.
-func validateTimeRange(startTime, endTime string) error {
+// ValidateTimeRange ensures start_time is before end_time.
+func ValidateTimeRange(startTime, endTime string) error {
 	start, err := time.Parse("15:04", startTime)
 	if err != nil {
 		return fmt.Errorf("invalid start_time format, expected HH:MM")
