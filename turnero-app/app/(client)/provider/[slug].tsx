@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { View, Text, FlatList, ActivityIndicator, TouchableOpacity } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useProviderProfile } from "../../../hooks/useApi";
@@ -5,12 +6,20 @@ import { Card } from "../../../components/ui/Card";
 import { Button } from "../../../components/ui/Button";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { openWhatsApp } from "../../../lib/whatsapp";
+import { useAppStore } from "../../../stores/appStore";
 import type { Service } from "../../../types/api";
 
 export default function ProviderProfileScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const router = useRouter();
   const { data: provider, isLoading, error } = useProviderProfile(slug ?? "");
+  const addRecent = useAppStore((s) => s.addRecent);
+
+  useEffect(() => {
+    if (provider) {
+      addRecent({ slug: provider.slug, name: provider.name, type: provider.type });
+    }
+  }, [provider, addRecent]);
 
   if (isLoading) {
     return (

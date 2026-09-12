@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { View, Text } from "react-native";
 import { useRouter, Stack } from "expo-router";
-import * as SecureStore from "expo-secure-store";
+import { storage } from "../../../lib/storage";
 import { Input } from "../../../components/ui/Input";
 import { Button } from "../../../components/ui/Button";
 
@@ -13,7 +13,7 @@ export default function AppointmentsListScreen() {
   const [searchPhone, setSearchPhone] = useState("");
 
   useEffect(() => {
-    SecureStore.getItemAsync(PHONE_KEY).then((saved) => {
+    storage.getItem(PHONE_KEY).then((saved) => {
       if (saved) {
         setPhone(saved);
         setSearchPhone(saved);
@@ -24,7 +24,7 @@ export default function AppointmentsListScreen() {
   const handleSearch = async () => {
     if (phone.trim()) {
       setSearchPhone(phone.trim());
-      await SecureStore.setItemAsync(PHONE_KEY, phone.trim());
+      await storage.setItem(PHONE_KEY, phone.trim());
     }
   };
 

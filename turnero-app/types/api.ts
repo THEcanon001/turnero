@@ -387,6 +387,14 @@ export interface EmployeeLoginRequest {
   password: string;
 }
 
+// Recent providers (local storage)
+export interface RecentProvider {
+  slug: string;
+  name: string;
+  type: string;
+  visited_at: string; // ISO date
+}
+
 // Join
 export interface JoinRequest {
   code: string;

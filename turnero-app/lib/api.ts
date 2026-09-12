@@ -1,6 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
-import * as SecureStore from "expo-secure-store";
 import type { ApiError, TokenPair } from "../types/api";
+import { storage } from "./storage";
 
 const BASE_URL = "http://localhost:8080";
 
@@ -14,24 +14,24 @@ export const api = axios.create({
 
 // Token helpers
 export async function getAccessToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+  return storage.getItem(ACCESS_TOKEN_KEY);
 }
 
 export async function getRefreshToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+  return storage.getItem(REFRESH_TOKEN_KEY);
 }
 
 export async function setTokens(
   accessToken: string,
   refreshToken: string
 ): Promise<void> {
-  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
-  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+  await storage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  await storage.setItem(REFRESH_TOKEN_KEY, refreshToken);
 }
 
 export async function clearTokens(): Promise<void> {
-  await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
-  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+  await storage.deleteItem(ACCESS_TOKEN_KEY);
+  await storage.deleteItem(REFRESH_TOKEN_KEY);
 }
 
 // Request interceptor: attach Bearer token
